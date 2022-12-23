@@ -1,0 +1,217 @@
+---
+title: "College Tuition Dashboard"
+output: 
+  flexdashboard::flex_dashboard:
+    orientation: columns
+    vertical_layout: fill
+runtime: shiny
+---
+
+```{r setup, include=FALSE}
+library(flexdashboard)
+
+library(plot.matrix)
+library(dplyr)
+library(tidyr)
+library(tidyverse)
+library(purrr)
+library(forcats)
+```
+
+```{r, warning=F, message=F}
+## import data
+library(here)
+if(!file.exists(here("data","tuition_cost.RDS"))){
+  tuition_cost <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2020/2020-03-10/tuition_cost.csv')
+  tuition_income <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2020/2020-03-10/tuition_income.csv') 
+  salary_potential <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2020/2020-03-10/salary_potential.csv')
+  historical_tuition <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2020/2020-03-10/historical_tuition.csv')
+  diversity_school <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2020/2020-03-10/diversity_school.csv')
+
+  # save the files to RDS objects
+  saveRDS(tuition_cost, file = here("data","tuition_cost.RDS"))
+  saveRDS(tuition_income, file = here("data","tuition_income.RDS"))
+  saveRDS(salary_potential, file = here("data","salary_potential.RDS"))
+  saveRDS(historical_tuition, file = here("data","historical_tuition.RDS"))
+  saveRDS(diversity_school, file = here("data","diversity_school.RDS"))
+}
+tuition_cost = readRDS(here("data","tuition_cost.RDS"))
+tuition_income = readRDS(here("data","tuition_income.RDS"))
+salary_potential = readRDS(here("data","salary_potential.RDS"))
+historical_tuition = readRDS(here("data","historical_tuition.RDS"))
+diversity_school = readRDS(here("data","diversity_school.RDS"))
+```
+
+About {data-icon="fa-question-circle"}
+===================================== 
+
+Column {data-width="70"}
+-------------------------------------
+
+**Purpose:** We want to show the college tuition with different characteristics of the universities.
+
+**Data:** The [data](https://github.com/rfordatascience/tidytuesday/tree/master/data/2020/2020-03-10) shows the tuition cost from different universities with different year length and type, which most data are originally came from the US Department of Education.
+
+**Data Dictionary:** The data dictionary is below: <https://github.com/rfordatascience/tidytuesday/tree/master/data/2020/2020-03-10#data-dictionary>
+
+The Data {data-icon="fa-database"}
+===================================== 
+
+Column {data-width=70}
+-------------------------------------
+
+### The Data 
+The [data](https://github.com/rfordatascience/tidytuesday/tree/master/data/2020/2020-03-10) shows the tuition cost from different universities with different year length and type, which most data are originally came from the US Department of Education.
+
+```{r, echo=FALSE}
+tuition = tuition_cost %>%
+  filter(degree_length == "4 Year") %>%
+  drop_na() %>%
+  left_join(salary_potential, by = "name") 
+```
+
+```{r, echo=FALSE}
+DT::renderDataTable({
+  DT::datatable(tuition,
+                options = list(autoWidth = TRUE,
+                               pageLength = 10,
+                               scroller = TRUE,
+                               scrollY = '450px'))
+})
+```
+
+Statistics {data-icon="fa-flag"}
+===================================== 
+
+Column {.sidebar data-width=250}
+-----------------------------------------------------------------------
+
+```{r}
+selectInput(inputId = "state_selected", 
+            label = "Select a state to explore:",
+            choices = tuition %>% 
+            pull(state) %>% 
+            unique() %>%
+            sort(), 
+            selected = "Alabama")
+
+selectInput(inputId = "type_selected", 
+            label = "Select a type of college to explore:",
+            choices = tuition %>% 
+            pull(type) %>% 
+            unique() %>%
+            sort(), 
+            selected = "Public")
+```
+
+Column {data-width=750 .tabset .tabset-fade}
+-----------------------------------------------------------------------
+
+### Distribution of Different Type of Tuition
+```{r}
+renderPlot({
+  tuition_state = tuition %>% 
+    filter(state == input$state_selected) %>%
+    filter(type == input$type_selected) %>%
+    select(c(1,2,4,8,10)) %>%
+    pivot_longer(!c(1,2,3), names_to = "tuition_type", values_to = "tuition_cost")
+  
+  tuition_state %>%
+    ggplot(aes(x = tuition_cost, fill = tuition_type)) +
+    geom_histogram(alpha=0.5, position="identity")
+})
+```
+
+Analysis {data-icon="fa-list-ol"}
+===================================== 
+
+Column {data-width=800}
+-----------------------------------------------------------------------
+
+### Colleges Tuition Ranking
+
+```{r, fig.width = 8, fig.height = 8}
+tuition = tuition_cost %>%
+  filter(degree_length == "4 Year") %>%
+  drop_na() %>%
+  left_join(salary_potential, by = "name")
+
+tuition_in_out = pmap_dbl(tuition,
+                          .f = function(in_state_tuition, out_of_state_tuition, ...){
+                            (in_state_tuition + out_of_state_tuition)/2
+                          }) 
+tuition = cbind(tuition,tuition_in_out)
+
+tuition %>% 
+  arrange(desc(tuition_in_out)) %>%
+  head(30) %>%
+  mutate(name = fct_reorder(name, tuition_in_out)) %>%
+  ggplot(aes(x = name, y = tuition_in_out, fill = type)) +
+  geom_col() +
+  coord_flip() +
+  labs(title = "Top 30 most expensive colleges",
+       subtitle = "The top 30 most expensive colleges are come from private college",
+       x = "Tuition in dollar",
+       y = "College Name",
+       caption = "Siyao Li")
+```
+
+
+### Relationship between the STEM Percentage and the Tuition
+
+```{r, warning=F, message=F, fig.width = 8, fig.height = 8}
+tuition %>%
+  drop_na() %>%
+  ggplot(aes(x = stem_percent, y = tuition_in_out/10000)) +
+      geom_point(alpha = 0.5) +
+      geom_smooth(method = "lm") +
+      facet_wrap(~state_code, nrow = 10) +
+      labs(x = "STEM percentage",
+           y = "tuition in dollar (10 thousands)",
+           title = "Stem Percentage v.s. Tuition",
+           subtitle = "Higher the stem percentage, higher the tuition.",
+           caption = "Siyao Li") +
+  ylim(c(0, max(tuition_in_out/10000)))
+```
+
+
+```{r, warning=F, message=F, fig.width = 8, fig.height = 8}
+tuition_dat = tuition |> split(tuition$state)
+
+tuition_in_state = tuition_dat |> map_df(.f = ~mean(.x$in_state_tuition)) %>% t()
+tuition_in_state = cbind(state = rownames(tuition_in_state), tuition_in_state)
+tuition_in_state = as.tibble(tuition_in_state)
+tuition_in_state$V2 = as.double(tuition_in_state$V2)
+
+tuition_out_state = tuition_dat |> map_df(.f = ~mean(.x$out_of_state_tuition)) %>% t()
+tuition_out_state = cbind(state = rownames(tuition_out_state), tuition_out_state)
+tuition_out_state = as.tibble(tuition_out_state)
+tuition_out_state$V2 = as.double(tuition_out_state$V2)
+
+tuition_in_out_state = tuition_dat |> map_df(.f = ~mean(.x$tuition_in_out)) %>% t()
+tuition_in_out_state = cbind(state = rownames(tuition_in_out_state), tuition_in_out_state)
+tuition_in_out_state = as.tibble(tuition_in_out_state)
+tuition_in_out_state$V2 = as.double(tuition_in_out_state$V2)
+
+summary = full_join(tuition_in_state, tuition_out_state, by = "state") %>%
+  full_join(tuition_in_out_state, by = "state")
+colnames(summary) = c("state","in_state","out_state","average")
+summary$in_state = summary$in_state/10000
+summary$out_state = summary$out_state/10000
+summary$average = summary$average/10000
+```
+
+Column {data-width=650}
+-----------------------------------------------------------------------
+
+### Heat Map between States and Different Type of Tuition
+```{r}
+m = as.matrix(summary[,2:4])
+plot(m,breaks=4,digits = 3,col=topo.colors, xlab="Type of Tuition", ylab="States")
+title(main = "Different tyle of Tuition",
+      sub = "in state tuition is much lower than the out of state tuition")
+```
+
+### Summary
+In conclusion, we can notice that the most expensive colleges are private colleges, and the percentage of stem is higher means that the higher the tuition cost. Also, the out of state tuition cost is higher than the in state tuition cost.
+
